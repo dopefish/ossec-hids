@@ -22,7 +22,10 @@
 /* Global variables */
 unsigned int mail_timeout;
 unsigned int   _g_subject_level;
+unsigned int   _group_alertcount;
 char _g_subject[SUBJECT_SIZE + 2];
+char _group_subject[SUBJECT_SIZE + 2];
+
 
 /* Prototypes */
 static void OS_Run(MailConfig *mail) __attribute__((nonnull)) __attribute__((noreturn));
