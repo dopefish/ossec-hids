@@ -14,8 +14,8 @@
 #define MAXCHILDPROCESS     6    /* Maximum simultaneous children */
 
 /* Each timeout is x * 5 */
-#define NEXTMAIL_TIMEOUT    2    /* Time to check for next msg - 5 */
-#define DEFAULT_TIMEOUT     18   /* socket read timeout - 18 (*5)*/
+#define NEXTMAIL_TIMEOUT    4    /* Time to check for next msg - 5 */
+#define DEFAULT_TIMEOUT     60   /* socket read timeout - 18 (*5)*/
 #define SUBJECT_SIZE        128  /* Maximum subject size */
 
 /* Maximum body size */
@@ -24,6 +24,8 @@
 #define SMS_SUBJECT         "OSSEC %d - %d - %s"
 #define MAIL_SUBJECT        "OSSEC Notification - %s - Alert level %d"
 #define MAIL_SUBJECT_FULL   "OSSEC Alert - %s - Level %d - %s"
+#define MULTIPLE_ALERTS     "%s [%ix]"
+#define HOURLY_SUBJECT      "OSSEC Alert - Multiple Alerts consolidated [%ix] (hourly limit was reached)"
 
 /* Full subject without ossec in the name */
 #ifdef CLEANFULL
@@ -35,6 +37,7 @@
                             "%s\r\n\r\n" \
                             "Received From: %s\r\n" \
                             "Rule: %d fired (level %d) -> \"%s\"\r\n" \
+                            "Group(s): %s\r\n" \
                             "%s" \
                             "%s" \
                             "%s" \
@@ -45,6 +48,7 @@
                             "%s\r\n\r\n" \
                             "Received From: %s\r\n" \
                             "Rule: %d fired (level %d) -> \"%s\"\r\n" \
+                            "Group(s): %s\r\n" \
                             "%s" \
                             "Portion of the log(s):\r\n\r\n%s\r\n" \
                             "\r\n\r\n --END OF NOTIFICATION\r\n\r\n\r\n"
@@ -76,7 +80,9 @@ extern unsigned int mail_timeout;
 
 /* Global var for highest level on mail subjects */
 extern unsigned int   _g_subject_level;
+extern unsigned int   _group_alertcount;
 extern char _g_subject[SUBJECT_SIZE + 2];
+extern char _group_subject[SUBJECT_SIZE +2];
 
 #endif
 

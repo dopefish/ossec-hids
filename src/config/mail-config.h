@@ -31,6 +31,7 @@ typedef struct _MailConfig {
     unsigned int *gran_level;
     unsigned int **gran_id;
     int *gran_set;
+    int *gran_tmp_set;
     int *gran_format;
     char **gran_to;
 

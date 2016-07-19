@@ -13,6 +13,8 @@
 #include "config/config.h"
 #endif
 
+#define MAIL_DEBUG_FLAG     0
+#define MAIL_DEBUG(x,y,z) if(MAIL_DEBUG_FLAG) merror(x,y,z)
 
 /* Receive a Message on the Mail queue */
 MailMsg *OS_RecvMailQ(file_queue *fileq, struct tm *p,
@@ -187,6 +189,7 @@ MailMsg *OS_RecvMailQ(file_queue *fileq, struct tm *p,
              al_data->rule,
              al_data->level,
              al_data->comment,
+             al_data->group,
              geoip_msg_src,
              geoip_msg_dst,
              extra_data,
@@ -198,6 +201,7 @@ MailMsg *OS_RecvMailQ(file_queue *fileq, struct tm *p,
              al_data->rule,
              al_data->level,
              al_data->comment,
+             al_data->group,
              extra_data,
              logs);
 #endif
@@ -206,8 +210,10 @@ MailMsg *OS_RecvMailQ(file_queue *fileq, struct tm *p,
     /* Check for granular email configs */
     if (Mail->gran_to) {
         i = 0;
+        MAIL_DEBUG("Mail DEBUG filter:    parse %s %s", mail->subject, "");
         while (Mail->gran_to[i] != NULL) {
             int gr_set = 0;
+            Mail->gran_tmp_set[i] = 0;
 
             /* Look if location is set */
             if (Mail->gran_location[i]) {
@@ -264,8 +270,9 @@ MailMsg *OS_RecvMailQ(file_queue *fileq, struct tm *p,
 
             /* If we got here, everything matched. Set this e-mail to be used. */
             if (gr_set) {
+                MAIL_DEBUG("Mail DEBUG filter:    add %s %s", Mail->gran_to[i], "");
                 if (Mail->gran_format[i] == SMS_FORMAT) {
-                    Mail->gran_set[i] = SMS_FORMAT;
+                    Mail->gran_tmp_set[i] = SMS_FORMAT;
 
                     /* Set the SMS flag */
                     sms_set = 1;
@@ -273,13 +280,13 @@ MailMsg *OS_RecvMailQ(file_queue *fileq, struct tm *p,
                     /* Options */
                     if (Mail->gran_format[i] == FORWARD_NOW) {
                         Mail->priority = 1;
-                        Mail->gran_set[i] = FULL_FORMAT;
+                        Mail->gran_tmp_set[i] = FULL_FORMAT;
                     } else if (Mail->gran_format[i] == DONOTGROUP) {
                         Mail->priority = DONOTGROUP;
-                        Mail->gran_set[i] = DONOTGROUP;
+                        Mail->gran_tmp_set[i] = DONOTGROUP;
                         donotgroup = 1;
                     } else {
-                        Mail->gran_set[i] = FULL_FORMAT;
+                        Mail->gran_tmp_set[i] = FULL_FORMAT;
                     }
                 }
             }
@@ -292,7 +299,8 @@ MailMsg *OS_RecvMailQ(file_queue *fileq, struct tm *p,
     if (!donotgroup) {
         /* Get highest level for alert */
         if (_g_subject[0] != '\0') {
-            if (_g_subject_level < al_data->level) {
+            /* Only change subject in grouping mode 1 */
+            if(_g_subject_level < al_data->level && Mail->groupping == 1) {
                 strncpy(_g_subject, mail->subject, SUBJECT_SIZE);
                 _g_subject_level = al_data->level;
             }

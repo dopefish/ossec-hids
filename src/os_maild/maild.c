@@ -11,6 +11,10 @@
 #include "maild.h"
 #include "mail_list.h"
 
+/* GDB: set follow-fork-mode child */
+#define MAIL_DEBUG_FLAG     0
+#define MAIL_DEBUG(x,y,z) if(MAIL_DEBUG_FLAG) merror(x,y,z)
+
 #ifndef ARGV0
 #define ARGV0 "ossec-maild"
 #endif
@@ -131,7 +135,7 @@ int main(int argc, char **argv)
     /* Get groupping */
     mail.groupping = getDefine_Int("maild",
                                    "groupping",
-                                   0, 1);
+                                   0, 2);
 
     /* Get subject type */
     mail.subject_full = getDefine_Int("maild",
@@ -207,6 +211,7 @@ static void OS_Run(MailConfig *mail)
     int mailtosend = 0;
     int childcount = 0;
     int thishour = 0;
+    int flush_grouped = 0;
 
     int n_errs = 0;
 
@@ -231,7 +236,9 @@ static void OS_Run(MailConfig *mail)
 
     /* Clear global variables */
     _g_subject_level = 0;
+    _group_alertcount = 1;
     memset(_g_subject, '\0', SUBJECT_SIZE + 2);
+    memset(_group_subject, '\0', SUBJECT_SIZE +2);
 
     while (1) {
         tm = time(NULL);
@@ -271,7 +278,7 @@ static void OS_Run(MailConfig *mail)
         }
 
         /* Hour changed: send all supressed mails */
-        else if (((mailtosend < mail->maxperhour) && (mailtosend != 0)) ||
+        else if ((mailtosend < mail->maxperhour) ||
                  ((p->tm_hour != thishour) && (childcount < MAXCHILDPROCESS))) {
             MailNode *mailmsg;
             pid_t pid;
@@ -282,19 +289,56 @@ static void OS_Run(MailConfig *mail)
                 /* Don't fork in here */
                 goto snd_check_hour;
             }
-
+            if(mail->gran_to)
+            {
+                i = 0;
+                while(mail->gran_to[i] != NULL)
+                {
+                    if (mail->gran_set[i] > 0)
+                    {
+                        MAIL_DEBUG("Mail DEBUG send mail: mailto %s -> %i", mail->gran_to[i], mail->gran_set[i]);
+                    }
+                    i++;
+                }
+            }
             pid = fork();
             if (pid < 0) {
+                MAIL_DEBUG("Mail DEBUG send mail: fork failed %s %s", "", "");
                 merror(FORK_ERROR, ARGV0, errno, strerror(errno));
                 sleep(30);
                 continue;
             } else if (pid == 0) {
+                if(mail->groupping == 2)
+                {
+                    memset(_g_subject, '\0', SUBJECT_SIZE +2);
+                    if((_group_alertcount > 1) && (_group_subject[0] != '\0'))
+                    {
+                        if (strlen(_group_subject) > SUBJECT_SIZE -17)
+                        {
+                            strncpy(_g_subject, _group_subject, SUBJECT_SIZE-21);
+                            snprintf(_group_subject,SUBJECT_SIZE -17,"%s....", _g_subject);
+                            memset(_g_subject, '\0', SUBJECT_SIZE +2);
+                        }
+                        snprintf(_g_subject, SUBJECT_SIZE -1, MULTIPLE_ALERTS, _group_subject, _group_alertcount);
+                    }
+                    else
+                    {
+                        strncpy(_g_subject, _group_subject, SUBJECT_SIZE);
+                    }
+                }
+                if(p->tm_hour != thishour && mailtosend >= mail->maxperhour)
+                {
+                    snprintf(_g_subject, SUBJECT_SIZE -1, HOURLY_SUBJECT, _group_alertcount);
+                }
                 if (OS_Sendmail(mail, p) < 0) {
                     merror(SNDMAIL_ERROR, ARGV0, mail->smtpserver);
                 }
 
                 exit(0);
             }
+
+            /* increase mail counter */
+            mailtosend++;
 
             /* Clean the memory */
             mailmsg = OS_PopLastMail();
@@ -311,15 +355,20 @@ static void OS_Run(MailConfig *mail)
             _g_subject[SUBJECT_SIZE - 1] = '\0';
             _g_subject_level = 0;
 
+            _group_alertcount = 1;
+            _group_subject[0] = '\0';
+            _group_subject[SUBJECT_SIZE -1] = '\0';
+
             /* Clean up set values */
             if (mail->gran_to) {
+                MAIL_DEBUG("Mail DEBUG send mail: resetting mailto %s %s", "", "");
                 i = 0;
                 while (mail->gran_to[i] != NULL) {
-                    if (s_msg && mail->gran_set[i] == DONOTGROUP) {
-                        mail->gran_set[i] = FULL_FORMAT;
-                    } else {
-                        mail->gran_set[i] = 0;
+                    if(s_msg && mail->gran_tmp_set[i] == DONOTGROUP)
+                    {
+                        mail->gran_tmp_set[i] = FULL_FORMAT;
                     }
+                    mail->gran_set[i] = 0;
                     i++;
                 }
             }
@@ -335,6 +384,16 @@ snd_check_hour:
 
         /* Saved message for the do_not_group option */
         if (s_msg) {
+            i = 0;
+            while(mail->gran_to[i] != NULL)
+            {
+                if (mail->gran_tmp_set[i] > 0)
+                {
+                    MAIL_DEBUG("Mail DEBUG smsg loop: copying to gran_set: %s %i", mail->gran_to[i], mail->gran_tmp_set[i] );
+                    mail->gran_set[i] = mail->gran_tmp_set[i];
+                }
+                i++;
+            }
             /* Set the remaining do no group to full format */
             if (mail->gran_to) {
                 i = 0;
@@ -348,13 +407,36 @@ snd_check_hour:
 
             OS_AddMailtoList(s_msg);
 
-            s_msg = NULL;
-            mailtosend++;
-            continue;
+            /* flush_grouped is set when mail is grouped by subject */
+            if(flush_grouped > 0)
+            {
+                strncpy(_group_subject, s_msg->subject, SUBJECT_SIZE);
+                s_msg = NULL;
+                /* this is a priority message, flush the email queue again */
+                if(flush_grouped == 2)
+                {
+                    flush_grouped = 0;
+                    continue;
+                }
+                flush_grouped = 0;
+            }
+            else
+            { /* normal behavior, only skip if we are grouping by subject */
+                 s_msg = NULL;
+                continue;
+            }
         }
 
         /* Receive message from queue */
         if ((msg = OS_RecvMailQ(fileq, p, mail, &msg_sms)) != NULL) {
+            /* If we are < max emails per hour then count the mails grouped by subject
+               If we are > max emails per hour then count all mails
+            */
+            if((mailtosend >= mail->maxperhour)||
+                ((mail->groupping == 2) && (strncmp(_group_subject, msg->subject, SUBJECT_SIZE) == 0 )))
+            {
+                _group_alertcount++;
+            }
             /* If the e-mail priority is do_not_group,
              * flush all previous entries and then send it.
              * Use s_msg to hold the pointer to the message while we flush it.
@@ -362,31 +444,61 @@ snd_check_hour:
             if (mail->priority == DONOTGROUP) {
                 s_msg = msg;
             } else {
-                OS_AddMailtoList(msg);
+                if(mail->groupping == 2)
+                {
+                    /* check if we can group this mesage with the last one */
+                    if (strncmp(_group_subject, msg->subject, SUBJECT_SIZE) == 0 )
+                    {
+                        debug1("%s: grouping mail with subject '%s'", ARGV0, msg->subject);
+                        i = 0;
+                        while(mail->gran_to[i] != NULL)
+                        {
+                            if (mail->gran_tmp_set[i] > 0)
+                            {
+                                MAIL_DEBUG("Mail DEBUG main loop: copying to gran_set: %s %i", mail->gran_to[i], mail->gran_tmp_set[i] );
+                                mail->gran_set[i] = mail->gran_tmp_set[i];
+                            }
+                            i++;
+                        }
+                        OS_AddMailtoList(msg);
+                    }
+                    else
+                    {
+                        debug1("%s: new mail queue with subject '%s'", ARGV0, msg->subject);
+                        /* first flush email queue, then add current messagt to the empty queue */
+                        s_msg = msg;
+                        /* we are going to flush any mails in the queue but have to remember how this specific email has to be handled afterwards */
+                        if(mail->priority)
+                        {
+                            /* priority mail, send directly after queue is flushed */
+                            flush_grouped = 2;
+                        }
+                        else
+                        {
+                            flush_grouped = 1;
+                        }
+                        mail_timeout = DEFAULT_TIMEOUT;
+                        continue;
+                    }
+                }
+                else
+                { /* no grouping of emails, or global grouping of emails */
+                    OS_AddMailtoList(msg);
+                }
             }
 
             /* Change timeout to see if any new message is coming shortly */
-            if (mail->groupping) {
+            if(mail->groupping > 0) {
                 /* If priority is set, send email now */
                 if (mail->priority) {
                     mail_timeout = DEFAULT_TIMEOUT;
-
-                    /* If do_not_group is set, we do not increase the list count */
-                    if (mail->priority != DONOTGROUP) {
-                        mailtosend++;
-                    }
                 } else {
                     /* 5 seconds only */
                     mail_timeout = NEXTMAIL_TIMEOUT;
                 }
-            } else {
-                /* Send message by itself */
-                mailtosend++;
             }
         } else {
             if (mail_timeout == NEXTMAIL_TIMEOUT) {
-                mailtosend++;
-
                 /* Default timeout */
                 mail_timeout = DEFAULT_TIMEOUT;
             }

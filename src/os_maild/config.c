@@ -34,6 +34,7 @@ int MailConf(int test_config, const char *cfgfile, MailConfig *Mail)
     Mail->gran_location = NULL;
     Mail->gran_group = NULL;
     Mail->gran_set = NULL;
+    Mail->gran_tmp_set = NULL;
     Mail->gran_format = NULL;
     Mail->groupping = 1;
     Mail->strict_checking = 0;
